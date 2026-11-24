@@ -74,6 +74,19 @@ Closes #42
 
         self.assertEqual([], errors)
 
+    def test_web_editor_line_endings_preserve_visible_fields(self):
+        body = self.valid_body("해당 없음", "UI 변경 없음").replace("\n", "\r\n")
+        self.assertEqual(
+            [], check_pr.validate_contract(body, ["README.md"], lambda _: self.issue)
+        )
+
+    def test_hidden_issue_reference_does_not_link_a_work_item(self):
+        body = self.valid_body("해당 없음", "UI 변경 없음").replace(
+            "Closes #42", "<!-- Closes #42 -->"
+        )
+        errors = check_pr.validate_contract(body, ["README.md"], lambda _: self.issue)
+        self.assertTrue(any("Closes #" in error for error in errors))
+
     def test_ui_change_rejects_placeholder_link_and_accepts_real_link_shape(self):
         for placeholder_link in ("https://example.com/demo", "https://github.com"):
             with self.subTest(placeholder_link=placeholder_link):

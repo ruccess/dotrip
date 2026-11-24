@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-ISSUE_REFERENCE = re.compile(r"(?i)\bcloses\s+#(\d+)\b")
+ISSUE_REFERENCE = re.compile(r"(?im)^[ \t]*closes[ \t]+#([1-9][0-9]*)[ \t]*$")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 PLACEHOLDERS = {
     "",
@@ -72,8 +72,10 @@ def validate_contract(
 ) -> list[str]:
     """Return all user-actionable contract errors for a pull request."""
     errors: list[str] = []
+    pull_request_body = HTML_COMMENT.sub("", pull_request_body).replace("\r\n", "\n")
     issue_numbers = {
-        int(number) for number in ISSUE_REFERENCE.findall(pull_request_body)
+        int(number)
+        for number in ISSUE_REFERENCE.findall(_section(pull_request_body, "연결 이슈"))
     }
     if len(issue_numbers) != 1:
         errors.append(
