@@ -14,6 +14,89 @@ import merge_checked
 
 
 class MergeCheckedTest(unittest.TestCase):
+    def test_requires_open_non_draft_same_repository_pull_request(self) -> None:
+        client = Mock()
+        payload = pull_request()
+        payload["state"] = "open"
+        payload["draft"] = True
+        payload["head"] = {"sha": "head-sha", "repo": {"full_name": "ruccess/dotrip"}}
+        client.get_json.return_value = payload
+
+        with self.assertRaisesRegex(merge_checked.SafetyError, "open, non-draft"):
+            merge_checked.verify_pull_request(client, 42)
+
+    def test_rejects_a_pull_request_head_from_another_repository(self) -> None:
+        client = Mock()
+        payload = pull_request()
+        payload["head"] = {"sha": "head-sha", "repo": {"full_name": "fork/dotrip"}}
+        client.get_json.return_value = payload
+
+        with self.assertRaisesRegex(
+            merge_checked.SafetyError, "head is in ruccess/dotrip"
+        ):
+            merge_checked.verify_pull_request(client, 42)
+
+    def test_parses_reviewed_gate_only_with_a_full_sha(self) -> None:
+        head_sha = "a" * 40
+
+        self.assertEqual(
+            merge_checked.parse_arguments(["42", "--reviewed-gate", head_sha]),
+            (42, head_sha),
+        )
+        with self.assertRaisesRegex(merge_checked.SafetyError, "full lowercase"):
+            merge_checked.parse_arguments(["42", "--reviewed-gate", "short-sha"])
+
+    def test_requires_an_exact_reviewed_gate_sha_for_gate_file_changes(self) -> None:
+        comparison = {"files": [{"filename": "scripts/check_repo.py"}]}
+
+        with self.assertRaisesRegex(merge_checked.SafetyError, "--reviewed-gate"):
+            merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, None)
+
+        merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, "a" * 40)
+
+    def test_rejects_a_possibly_truncated_compare_file_list(self) -> None:
+        comparison = {
+            "files": [{"filename": f"src/{index}.py"} for index in range(300)]
+        }
+
+        with self.assertRaisesRegex(merge_checked.SafetyError, "300-file limit"):
+            merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, None)
+
+    def test_requires_review_when_a_gate_file_was_renamed(self) -> None:
+        comparison = {
+            "files": [
+                {
+                    "filename": "docs/pre-push-notes.txt",
+                    "previous_filename": ".githooks/pre-push",
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(merge_checked.SafetyError, "--reviewed-gate"):
+            merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, None)
+
+    def test_updates_default_ref_with_a_non_force_fast_forward(self) -> None:
+        authentication = merge_checked.subprocess.CompletedProcess(
+            args=["gh", "auth", "token"], returncode=0, stdout="token\n", stderr=""
+        )
+        updated_reference = merge_checked.subprocess.CompletedProcess(
+            args=["gh", "api"], returncode=0, stdout="{}", stderr=""
+        )
+        with patch.object(
+            merge_checked.subprocess,
+            "run",
+            side_effect=[authentication, updated_reference],
+        ) as run:
+            merge_checked.GitHubClient().update_default_reference("a" * 40)
+
+        update_arguments = run.call_args_list[1].args[0]
+        self.assertEqual(update_arguments[:4], ["gh", "api", "--method", "PATCH"])
+        self.assertIn(
+            "/repos/ruccess/dotrip/git/refs/heads/docs%2Fideation", update_arguments
+        )
+        self.assertIn("force=false", update_arguments)
+        self.assertNotIn("--force", update_arguments)
+
     def test_pre_push_blocks_default_branch_and_allows_feature_branch(self) -> None:
         self.assertTrue(PRE_PUSH_HOOK.is_file(), "pre-push hook must exist")
         self.assertTrue(
@@ -67,13 +150,15 @@ class MergeCheckedTest(unittest.TestCase):
                 "number": 42,
                 "mergeable": True,
                 "mergeable_state": "clean",
-                "head": {"sha": "head-sha"},
+                "head": {"sha": "head-sha", "repo": {"full_name": "ruccess/dotrip"}},
                 "base": {"ref": "docs/ideation", "sha": "base-sha"},
+                "state": "open",
+                "draft": False,
                 "updated_at": "2026-11-24T10:00:00Z",
             },
             {"default_branch": "docs/ideation"},
             {"commit": {"sha": "base-sha"}},
-            {"merge_base_commit": {"sha": "base-sha"}},
+            {"merge_base_commit": {"sha": "base-sha"}, "files": []},
             {
                 "workflow_runs": [
                     successful_run(100, "2026-11-24T10:01:00Z"),
@@ -92,13 +177,15 @@ class MergeCheckedTest(unittest.TestCase):
                 "number": 42,
                 "mergeable": True,
                 "mergeable_state": "clean",
-                "head": {"sha": "head-sha"},
+                "head": {"sha": "head-sha", "repo": {"full_name": "ruccess/dotrip"}},
                 "base": {"ref": "docs/ideation", "sha": "base-sha"},
+                "state": "open",
+                "draft": False,
                 "updated_at": "2026-11-24T10:00:00Z",
             },
             {"default_branch": "docs/ideation"},
             {"commit": {"sha": "base-sha"}},
-            {"merge_base_commit": {"sha": "base-sha"}},
+            {"merge_base_commit": {"sha": "base-sha"}, "files": []},
             {"workflow_runs": [successful_run(100, "2026-11-24T10:01:00Z")]},
             {
                 "jobs": [
@@ -130,13 +217,15 @@ class MergeCheckedTest(unittest.TestCase):
                 "number": 42,
                 "mergeable": True,
                 "mergeable_state": "clean",
-                "head": {"sha": "head-sha"},
+                "head": {"sha": "head-sha", "repo": {"full_name": "ruccess/dotrip"}},
                 "base": {"ref": "docs/ideation", "sha": "base-sha"},
+                "state": "open",
+                "draft": False,
                 "updated_at": "2026-11-24T10:00:00Z",
             },
             {"default_branch": "docs/ideation"},
             {"commit": {"sha": "base-sha"}},
-            {"merge_base_commit": {"sha": "base-sha"}},
+            {"merge_base_commit": {"sha": "base-sha"}, "files": []},
             {"workflow_runs": [successful_run(100, "2026-11-24T09:59:59Z")]},
         ]
 
@@ -153,7 +242,7 @@ class MergeCheckedTest(unittest.TestCase):
             pull_request(),
             {"default_branch": "docs/ideation"},
             {"commit": {"sha": "base-sha"}},
-            {"merge_base_commit": {"sha": "older-base-sha"}},
+            {"merge_base_commit": {"sha": "older-base-sha"}, "files": []},
         ]
 
         with self.assertRaisesRegex(merge_checked.SafetyError, "does not contain"):
@@ -165,7 +254,7 @@ class MergeCheckedTest(unittest.TestCase):
             pull_request(),
             {"default_branch": "docs/ideation"},
             {"commit": {"sha": "base-sha"}},
-            {"merge_base_commit": {"sha": "base-sha"}},
+            {"merge_base_commit": {"sha": "base-sha"}, "files": []},
             {
                 "workflow_runs": [
                     matching_run(
@@ -213,8 +302,10 @@ def pull_request() -> dict[str, object]:
         "number": 42,
         "mergeable": True,
         "mergeable_state": "clean",
-        "head": {"sha": "head-sha"},
+        "head": {"sha": "head-sha", "repo": {"full_name": "ruccess/dotrip"}},
         "base": {"ref": "docs/ideation", "sha": "base-sha"},
+        "state": "open",
+        "draft": False,
         "updated_at": "2026-11-24T10:00:00Z",
     }
 

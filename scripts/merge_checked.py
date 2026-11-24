@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from typing import Any
@@ -33,19 +34,23 @@ class GitHubClient:
             raise SafetyError("GitHub API returned an unexpected response.")
         return response
 
-    def merge(self, pull_request_number: int, head_sha: str) -> None:
+    def update_default_reference(self, head_sha: str) -> None:
+        branch_ref = quote(DEFAULT_BRANCH, safe="")
         result = self._run(
-            "pr",
-            "merge",
-            str(pull_request_number),
-            "--repo",
-            REPOSITORY,
-            "--merge",
-            "--match-head-commit",
-            head_sha,
+            "api",
+            "--method",
+            "PATCH",
+            f"/repos/{REPOSITORY}/git/refs/heads/{branch_ref}",
+            "-F",
+            f"sha={head_sha}",
+            "-F",
+            "force=false",
         )
         if result.returncode != 0:
-            raise SafetyError(result.stderr.strip() or "GitHub refused the merge.")
+            raise SafetyError(
+                result.stderr.strip()
+                or "GitHub refused the non-force fast-forward reference update."
+            )
 
     @staticmethod
     def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -71,8 +76,13 @@ class GitHubClient:
         )
 
 
-def verify_pull_request(client: GitHubClient, pull_request_number: int) -> str:
+def verify_pull_request(
+    client: GitHubClient, pull_request_number: int, reviewed_gate: str | None = None
+) -> str:
     pull_request = client.get_json(f"/repos/{REPOSITORY}/pulls/{pull_request_number}")
+    head = value_as_dict(pull_request, "head")
+    head_sha = value_as_string(head, "sha")
+    ensure_supported_pull_request(pull_request, head)
     repository = client.get_json(f"/repos/{REPOSITORY}")
     default_branch = repository.get("default_branch")
     if default_branch != DEFAULT_BRANCH:
@@ -83,7 +93,6 @@ def verify_pull_request(client: GitHubClient, pull_request_number: int) -> str:
     base = value_as_dict(pull_request, "base")
     if base.get("ref") != default_branch:
         raise SafetyError("Pull request does not target the repository default branch.")
-    head_sha = value_as_string(value_as_dict(pull_request, "head"), "sha")
     if (
         pull_request.get("mergeable") is not True
         or pull_request.get("mergeable_state") != "clean"
@@ -109,6 +118,7 @@ def verify_pull_request(client: GitHubClient, pull_request_number: int) -> str:
         raise SafetyError(
             "Pull request head does not contain the current default base; update it and rerun CI."
         )
+    ensure_gate_changes_reviewed(comparison, head_sha, reviewed_gate)
 
     run = latest_matching_run(client, pull_request_number, head_sha)
     ensure_current_successful_run(run, value_as_string(pull_request, "updated_at"))
@@ -121,6 +131,62 @@ def verify_pull_request(client: GitHubClient, pull_request_number: int) -> str:
     ):
         raise SafetyError("The current ci.yml run has no successful PR Gate job.")
     return head_sha
+
+
+def ensure_supported_pull_request(
+    pull_request: dict[str, Any], head: dict[str, Any]
+) -> None:
+    if pull_request.get("state") != "open" or pull_request.get("draft") is not False:
+        raise SafetyError(
+            "Only an open, non-draft pull request can update the default branch."
+        )
+    head_repository = value_as_dict(head, "repo")
+    if head_repository.get("full_name") != REPOSITORY:
+        raise SafetyError(
+            "Only a pull request whose head is in ruccess/dotrip is supported."
+        )
+
+
+def ensure_gate_changes_reviewed(
+    comparison: dict[str, Any], head_sha: str, reviewed_gate: str | None
+) -> None:
+    files = comparison.get("files")
+    if not isinstance(files, list) or len(files) >= 300:
+        raise SafetyError(
+            "Compare files may be incomplete at GitHub's 300-file limit; refusing to merge."
+        )
+    changed_gate_paths = {
+        path
+        for changed_file in files
+        if isinstance(changed_file, dict)
+        for path in (
+            changed_file.get("filename"),
+            changed_file.get("previous_filename"),
+        )
+        if isinstance(path, str) and is_gate_path(path)
+    }
+    if changed_gate_paths and (
+        reviewed_gate != head_sha or not is_full_sha(reviewed_gate)
+    ):
+        raise SafetyError(
+            "This PR changes CI or gate files; rerun with --reviewed-gate <full-SHA> matching the tested head."
+        )
+
+
+def is_gate_path(path: str) -> bool:
+    return path.startswith((".github/workflows/", ".githooks/")) or path in {
+        "scripts/check_repo.py",
+        "scripts/check_pr.py",
+        "scripts/verify.sh",
+        "scripts/merge_checked.py",
+        "tests/test_check_pr.py",
+        "tests/test_check_repo.py",
+        "tests/test_merge_checked.py",
+    }
+
+
+def is_full_sha(value: str | None) -> bool:
+    return value is not None and re.fullmatch(r"[0-9a-f]{40}", value) is not None
 
 
 def latest_matching_run(
@@ -237,19 +303,33 @@ def canonical_pull_request_number(argument: str) -> int:
 
 
 def main(arguments: list[str]) -> int:
-    if len(arguments) != 1:
-        print("Usage: python3 scripts/merge_checked.py <PR-number>", file=sys.stderr)
-        return 2
     try:
-        pull_request_number = canonical_pull_request_number(arguments[0])
+        pull_request_number, reviewed_gate = parse_arguments(arguments)
         client = GitHubClient()
-        head_sha = verify_pull_request(client, pull_request_number)
-        client.merge(pull_request_number, head_sha)
+        head_sha = verify_pull_request(client, pull_request_number, reviewed_gate)
+        client.update_default_reference(head_sha)
     except SafetyError as error:
         print(f"Not merged: {error}", file=sys.stderr)
         return 1
-    print(f"Merged PR #{pull_request_number} after the current PR Gate check passed.")
+    print(
+        f"Updated {DEFAULT_BRANCH} to tested head {head_sha} via a non-force fast-forward for PR #{pull_request_number}."
+    )
     return 0
+
+
+def parse_arguments(arguments: list[str]) -> tuple[int, str | None]:
+    if len(arguments) == 1:
+        return canonical_pull_request_number(arguments[0]), None
+    if len(arguments) == 3 and arguments[1] == "--reviewed-gate":
+        reviewed_gate = arguments[2]
+        if not is_full_sha(reviewed_gate):
+            raise SafetyError(
+                "--reviewed-gate must be a full lowercase 40-character SHA."
+            )
+        return canonical_pull_request_number(arguments[0]), reviewed_gate
+    raise SafetyError(
+        "Usage: python3 scripts/merge_checked.py <PR-number> [--reviewed-gate <full-SHA>]"
+    )
 
 
 if __name__ == "__main__":
