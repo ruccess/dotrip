@@ -38,3 +38,7 @@
 
 - 개인 지출과 공동 지출을 구분하고 일정과 동선을 같은 여행에서 보는 예시입니다. [대전 당일치기 앱](https://daejeon-daytrip-261113.silkenclay16.chatgpt.site/)
 - 오늘 쓴 원화와 다음에 갈 곳을 한 카드에 보여주고, 지난 여행의 장소 수와 지출을 함께 표시한 시안입니다. [여행 가계부 앱 화면 시안](https://claude.ai/artifact/1u5sRc5fe5SsFebNFeBoF7#play-64590f3363d5)
+
+## 개발 방식
+
+세 발표에서 가져온 판단 기준과 도트립의 적용 예시는 [개발 철학과 방향](docs/development-principles.md)에, 구현·검증·푸시 절차는 [에이전트 작업 지침](AGENTS.md)에 정리했습니다.
