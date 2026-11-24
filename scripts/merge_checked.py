@@ -34,23 +34,33 @@ class GitHubClient:
             raise SafetyError("GitHub API returned an unexpected response.")
         return response
 
-    def update_default_reference(self, head_sha: str) -> None:
-        branch_ref = quote(DEFAULT_BRANCH, safe="")
+    def merge_pull_request(self, pull_request_number: int, head_sha: str) -> str:
         result = self._run(
             "api",
             "--method",
-            "PATCH",
-            f"/repos/{REPOSITORY}/git/refs/heads/{branch_ref}",
+            "PUT",
+            f"/repos/{REPOSITORY}/pulls/{pull_request_number}/merge",
             "-F",
             f"sha={head_sha}",
             "-F",
-            "force=false",
+            "merge_method=merge",
         )
         if result.returncode != 0:
             raise SafetyError(
                 result.stderr.strip()
-                or "GitHub refused the non-force fast-forward reference update."
+                or "GitHub refused the native pull request merge; no ref update fallback is allowed."
             )
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise SafetyError(
+                "GitHub returned invalid JSON for the pull request merge."
+            ) from error
+        if not isinstance(response, dict) or response.get("merged") is not True:
+            raise SafetyError(
+                "GitHub did not merge the pull request; no ref update fallback is allowed."
+            )
+        return value_as_string(response, "sha")
 
     @staticmethod
     def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -174,15 +184,7 @@ def ensure_gate_changes_reviewed(
 
 
 def is_gate_path(path: str) -> bool:
-    return path.startswith((".github/workflows/", ".githooks/")) or path in {
-        "scripts/check_repo.py",
-        "scripts/check_pr.py",
-        "scripts/verify.sh",
-        "scripts/merge_checked.py",
-        "tests/test_check_pr.py",
-        "tests/test_check_repo.py",
-        "tests/test_merge_checked.py",
-    }
+    return path.startswith((".github/workflows/", ".githooks/", "scripts/", "tests/"))
 
 
 def is_full_sha(value: str | None) -> bool:
@@ -307,12 +309,12 @@ def main(arguments: list[str]) -> int:
         pull_request_number, reviewed_gate = parse_arguments(arguments)
         client = GitHubClient()
         head_sha = verify_pull_request(client, pull_request_number, reviewed_gate)
-        client.update_default_reference(head_sha)
+        merge_sha = client.merge_pull_request(pull_request_number, head_sha)
     except SafetyError as error:
         print(f"Not merged: {error}", file=sys.stderr)
         return 1
     print(
-        f"Updated {DEFAULT_BRANCH} to tested head {head_sha} via a non-force fast-forward for PR #{pull_request_number}."
+        f"Merged PR #{pull_request_number} into {DEFAULT_BRANCH} at {merge_sha} through GitHub's native pull request merge."
     )
     return 0
 

@@ -47,12 +47,22 @@ class MergeCheckedTest(unittest.TestCase):
             merge_checked.parse_arguments(["42", "--reviewed-gate", "short-sha"])
 
     def test_requires_an_exact_reviewed_gate_sha_for_gate_file_changes(self) -> None:
-        comparison = {"files": [{"filename": "scripts/check_repo.py"}]}
-
-        with self.assertRaisesRegex(merge_checked.SafetyError, "--reviewed-gate"):
-            merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, None)
-
-        merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, "a" * 40)
+        for path in (
+            "scripts/check_repo.py",
+            "scripts/new_check.py",
+            "tests/test_new.py",
+        ):
+            with self.subTest(path=path):
+                comparison = {"files": [{"filename": path}]}
+                with self.assertRaisesRegex(
+                    merge_checked.SafetyError, "--reviewed-gate"
+                ):
+                    merge_checked.ensure_gate_changes_reviewed(
+                        comparison, "a" * 40, None
+                    )
+                merge_checked.ensure_gate_changes_reviewed(
+                    comparison, "a" * 40, "a" * 40
+                )
 
     def test_rejects_a_possibly_truncated_compare_file_list(self) -> None:
         comparison = {
@@ -75,27 +85,61 @@ class MergeCheckedTest(unittest.TestCase):
         with self.assertRaisesRegex(merge_checked.SafetyError, "--reviewed-gate"):
             merge_checked.ensure_gate_changes_reviewed(comparison, "a" * 40, None)
 
-    def test_updates_default_ref_with_a_non_force_fast_forward(self) -> None:
+    def test_merges_the_verified_head_through_the_native_pull_request_endpoint(
+        self,
+    ) -> None:
         authentication = merge_checked.subprocess.CompletedProcess(
             args=["gh", "auth", "token"], returncode=0, stdout="token\n", stderr=""
         )
-        updated_reference = merge_checked.subprocess.CompletedProcess(
-            args=["gh", "api"], returncode=0, stdout="{}", stderr=""
+        merged_pull_request = merge_checked.subprocess.CompletedProcess(
+            args=["gh", "api"],
+            returncode=0,
+            stdout='{"merged": true, "sha": "merge-sha"}',
+            stderr="",
         )
         with patch.object(
             merge_checked.subprocess,
             "run",
-            side_effect=[authentication, updated_reference],
+            side_effect=[authentication, merged_pull_request],
         ) as run:
-            merge_checked.GitHubClient().update_default_reference("a" * 40)
+            merged_sha = merge_checked.GitHubClient().merge_pull_request(42, "a" * 40)
 
-        update_arguments = run.call_args_list[1].args[0]
-        self.assertEqual(update_arguments[:4], ["gh", "api", "--method", "PATCH"])
-        self.assertIn(
-            "/repos/ruccess/dotrip/git/refs/heads/docs%2Fideation", update_arguments
+        merge_arguments = run.call_args_list[1].args[0]
+        self.assertEqual(merged_sha, "merge-sha")
+        self.assertEqual(merge_arguments[:4], ["gh", "api", "--method", "PUT"])
+        self.assertIn("/repos/ruccess/dotrip/pulls/42/merge", merge_arguments)
+        self.assertIn("sha=" + "a" * 40, merge_arguments)
+        self.assertIn("merge_method=merge", merge_arguments)
+        self.assertNotIn("git/refs", merge_arguments)
+        self.assertNotIn("--force", merge_arguments)
+
+    def test_refuses_a_rejected_native_merge_without_a_ref_update_fallback(
+        self,
+    ) -> None:
+        authentication = merge_checked.subprocess.CompletedProcess(
+            args=["gh", "auth", "token"], returncode=0, stdout="token\n", stderr=""
         )
-        self.assertIn("force=false", update_arguments)
-        self.assertNotIn("--force", update_arguments)
+        rejected_merge = merge_checked.subprocess.CompletedProcess(
+            args=["gh", "api"],
+            returncode=405,
+            stdout="",
+            stderr="required status check is expected",
+        )
+        with (
+            patch.object(
+                merge_checked.subprocess,
+                "run",
+                side_effect=[authentication, rejected_merge],
+            ) as run,
+            self.assertRaisesRegex(merge_checked.SafetyError, "required status check"),
+        ):
+            merge_checked.GitHubClient().merge_pull_request(42, "a" * 40)
+
+        self.assertEqual(run.call_count, 2)
+        merge_arguments = run.call_args_list[1].args[0]
+        self.assertIn("/repos/ruccess/dotrip/pulls/42/merge", merge_arguments)
+        self.assertNotIn("git/refs", merge_arguments)
+        self.assertNotIn("--force", merge_arguments)
 
     def test_pre_push_blocks_default_branch_and_allows_feature_branch(self) -> None:
         self.assertTrue(PRE_PUSH_HOOK.is_file(), "pre-push hook must exist")
