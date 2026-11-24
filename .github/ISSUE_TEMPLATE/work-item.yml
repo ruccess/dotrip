@@ -1,0 +1,43 @@
+name: 작업 항목
+description: 사용자가 할 수 있어야 하는 행동과 완료 조건을 먼저 합의합니다.
+title: "[작업] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        구현 전에 사용자에게 보이는 행동과 검증 가능한 완료 조건을 적어주세요.
+        저장값이나 화면 결과를 바꾸는 미결정 사항이 있으면 함께 기록합니다.
+
+  - type: textarea
+    id: user-behavior
+    attributes:
+      label: 사용자 행동
+      description: 이 작업이 끝나면 사용자가 어떤 상황에서 무엇을 할 수 있어야 하나요?
+      placeholder: 혼자 여행 중인 사용자가 동행을 추가하지 않고 지출을 저장한 뒤 다시 열 수 있다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: 완료 조건
+      description: 구현과 독립 리뷰가 같은 결과를 판정할 수 있도록 관찰 가능한 조건을 적어주세요.
+      placeholder: |
+        - 480엔을 저장하면 오늘 기록에 한 건이 표시된다.
+        - 앱을 다시 열어도 같은 기록을 조회할 수 있다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: open-decisions
+    attributes:
+      label: 구현 전 결정할 사항
+      description: 답에 따라 저장값, 사용자 경험, 외부 인터페이스가 달라지는 질문이 있으면 적어주세요.
+      placeholder: 없다면 "없음"이라고 적어주세요.
+
+  - type: textarea
+    id: validation-notes
+    attributes:
+      label: 검증 메모
+      description: 반드시 실행할 시나리오, 예시 입력과 기대 결과, 필요한 화면 증거를 적어주세요.
