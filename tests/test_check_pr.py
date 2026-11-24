@@ -198,13 +198,27 @@ Closes #42
         self.assertTrue(any("PR 작성자 본인" in error for error in errors))
 
     def test_explicit_ui_path_cannot_skip_evidence_with_a_reason(self):
-        errors = check_pr.validate_contract(
-            self.valid_body("해당 없음", "UI 변경 없음", "내부 변경이라고 판단함"),
-            ["src/screens/ExpenseScreen.tsx"],
-            lambda number: self.issue,
+        explicit_ui_paths = (
+            "src/screens/ExpenseScreen.tsx",
+            "src/screens/ExpenseScreen.js",
+            "src/views/ExpenseView.ts",
+            "android/app/src/main/res/layout/activity_main.xml",
+            "android/app/src/main/res/layout-land/activity_main.xml",
+            "ios/Dotrip/Base.lproj/Main.storyboard",
+            "ios/Dotrip/ExpenseView.xib",
         )
 
-        self.assertTrue(any("명백한 UI 경로" in error for error in errors))
+        for path in explicit_ui_paths:
+            with self.subTest(path=path):
+                errors = check_pr.validate_contract(
+                    self.valid_body(
+                        "해당 없음", "UI 변경 없음", "내부 변경이라고 판단함"
+                    ),
+                    [path],
+                    lambda number: self.issue,
+                )
+
+                self.assertTrue(any("명백한 UI 경로" in error for error in errors))
 
     def test_unedited_pull_request_template_does_not_pass(self):
         template = Path(".github/pull_request_template.md").read_text(encoding="utf-8")

@@ -30,9 +30,19 @@ PLACEHOLDERS = {
 }
 TOOL_PREFIXES = (".github/", "docs/", "scripts/", "tests/")
 ROOT_DOCUMENTS = {"AGENTS.md", "CONTEXT.md", "README.md", "LICENSE"}
-DIRECT_UI_SUFFIXES = {".css", ".html", ".less", ".sass", ".scss", ".svelte", ".vue"}
-UI_CODE_SUFFIXES = {".dart", ".jsx", ".kt", ".kts", ".swift", ".tsx"}
-UI_PATH_PARTS = {"components", "pages", "screens", "ui", "views"}
+DIRECT_UI_SUFFIXES = {
+    ".css",
+    ".html",
+    ".less",
+    ".sass",
+    ".scss",
+    ".storyboard",
+    ".svelte",
+    ".vue",
+    ".xib",
+}
+UI_CODE_SUFFIXES = {".dart", ".js", ".jsx", ".kt", ".kts", ".swift", ".ts", ".tsx"}
+UI_PATH_PARTS = {"components", "pages", "screen", "screens", "ui", "views"}
 
 
 class ContractCheckFailure(RuntimeError):
@@ -182,10 +192,26 @@ def classify_paths(changed_paths: list[str]) -> str:
     for path in changed_paths:
         lowered = path.casefold()
         suffix = Path(lowered).suffix
-        parts = set(Path(lowered).parts)
-        if suffix in DIRECT_UI_SUFFIXES or (
-            suffix in UI_CODE_SUFFIXES
-            and (parts & UI_PATH_PARTS or Path(lowered).stem in {"app", "main"})
+        path_parts = Path(lowered).parts
+        android_layout = suffix == ".xml" and any(
+            part == "res"
+            and index + 1 < len(path_parts)
+            and (
+                path_parts[index + 1] == "layout"
+                or path_parts[index + 1].startswith("layout-")
+            )
+            for index, part in enumerate(path_parts)
+        )
+        if (
+            suffix in DIRECT_UI_SUFFIXES
+            or android_layout
+            or (
+                suffix in UI_CODE_SUFFIXES
+                and (
+                    set(path_parts) & UI_PATH_PARTS
+                    or Path(lowered).stem in {"app", "main"}
+                )
+            )
         ):
             return "explicit_ui"
     return "application_or_unknown"
