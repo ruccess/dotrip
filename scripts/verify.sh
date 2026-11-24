@@ -27,14 +27,12 @@ ruby -ryaml -e '
   abort "Missing required issue fields: #{missing.join(", ")}" unless missing.empty?
 ' .github/ISSUE_TEMPLATE/work-item.yml
 
-# Run every discovered suite, and catch removal of a verification surface.
-for suite in check_repo check_pr merge_checked; do
-  test -s "tests/test_${suite}.py" || { echo "Missing regression suite: $suite" >&2; exit 1; }
-done
 python3 -c '
 import sys, unittest
-suite = unittest.defaultTestLoader.discover("tests")
-if not suite.countTestCases():
-    sys.exit("No regression tests were discovered")
+loader = unittest.defaultTestLoader
+for name in ("check_repo", "check_pr", "merge_checked"):
+    if not loader.discover("tests", pattern=f"test_{name}.py").countTestCases():
+        sys.exit(f"No regression tests discovered for {name}")
+suite = loader.discover("tests")
 sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
 '
