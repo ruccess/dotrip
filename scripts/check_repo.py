@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import os
 import posixpath
 import re
@@ -10,7 +11,24 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 REQUIRED_DOCUMENTS = {"AGENTS.md", "CONTEXT.md", "README.md"}
+OTTER_ARTWORK_HASHES = {
+    "assets/otter/icons/coffee.png": "9c3fadea13bebe9a2be49f4921295052807d5a470a4076126bfdef315171d7e7",
+    "assets/otter/icons/exchange.png": "eb736d1ede1c62f519ee17701930c37f2b5aa19691fd226eb21b84ee880abba6",
+    "assets/otter/icons/place-pin.png": "5b07e4764e00449216c1bd27b32f0cfc5d526017e99bcd5dc8877b6bb1d28aab",
+    "assets/otter/icons/receipt.png": "6618b50ffda12ea319b9603ecb7e749d9a5ad6e1945a9f836bc359e106baf212",
+    "assets/otter/icons/saved.png": "e1029c842900e804d27593ef1df6378a5b42b01aa4eb9b0f5748af36db5e4a3e",
+    "assets/otter/icons/wallet.png": "42268243c3570d670c495d24a5d61b608078c4123b61c94d0c3f9bd7ce46fc06",
+    "assets/otter/otter-first-step-clean-cheeks.png": "9393103bdf30b3fcfa58fab5ed2822b3ea98af5935d5eafdd90c5c5578e9754f",
+    "assets/otter/poses/coffee.png": "8202ba940c0028809635906b7d6202fcda94adc65e14154ccb67f421fc70e7ac",
+    "assets/otter/poses/float.png": "c8ccbd0d3bac3482e30ee649cefe55ce6a51aa0ebc88d4102783105ddd2010a0",
+    "assets/otter/poses/read-map.png": "b32b98e17afc9fca1563d14851f787f0f63c57ea0bebc4974e4933226f6eeb45",
+    "assets/otter/poses/stamp-receipt.png": "54923645345c5da61293e7d48750220f9b6da1606b8ffc58c148cd91e7a7147e",
+    "assets/otter/poses/walk.png": "982b9ce1c70b30d01bf5755060ee5be6a7b7b3d1b67296d73284ba5dbe888b74",
+    "assets/otter/poses/write-expense.png": "fda27f5571297be6438274a5ad774fdfbe4b772accd1283bbe325d6d47658d0a",
+    "assets/otter/sudali-travel-preview.png": "875c99c5e0fb3434dbd6760c9b68862e5ac4f57d9628f1c2f12ab07a22286c2d",
+}
 EXACT_SUPPORTED_FILES = REQUIRED_DOCUMENTS | {
+    *OTTER_ARTWORK_HASHES,
     ".github/ISSUE_TEMPLATE/work-item.yml",
     ".github/pull_request_template.md",
     ".github/workflows/ci.yml",
@@ -124,6 +142,14 @@ def main() -> int:
 
     link_errors: list[tuple[str, str]] = []
     repository = Path.cwd()
+    for name, expected_hash in OTTER_ARTWORK_HASHES.items():
+        artwork = repository / name
+        if name not in tracked_files or not artwork.is_file():
+            print(f"수달이 이미지 파일이 없습니다: {name}")
+            return 1
+        if hashlib.sha256(artwork.read_bytes()).hexdigest() != expected_hash:
+            print(f"승인한 수달이 이미지와 다릅니다: {name}")
+            return 1
     for markdown_path in sorted(path for path in tracked_files if path.endswith(".md")):
         link_errors.extend(
             (markdown_path, target)
