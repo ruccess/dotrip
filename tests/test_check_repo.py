@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from scripts.check_repo import OTTER_ARTWORK_HASHES
 
 CHECK_REPO = Path(__file__).resolve().parents[1] / "scripts" / "check_repo.py"
 
@@ -19,6 +22,13 @@ class CheckRepoTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
+        )
+        for relative_path in OTTER_ARTWORK_HASHES:
+            target = self.repository / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(CHECK_REPO.parents[1] / relative_path, target)
+        subprocess.run(
+            ["git", "add", "--", "assets/otter"], cwd=self.repository, check=True
         )
 
     def write_tracked(self, relative_path: str, contents: str = "") -> None:
@@ -46,7 +56,7 @@ class CheckRepoTest(unittest.TestCase):
             check=False,
         )
 
-    def test_allows_current_document_only_repository(self) -> None:
+    def test_allows_current_documents_and_artwork(self) -> None:
         self.add_required_documents()
 
         result = self.run_checker()
@@ -81,6 +91,46 @@ class CheckRepoTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("docs/guide.md", result.stdout)
         self.assertIn("missing.md", result.stdout)
+
+    def test_rejects_replaced_otter_artwork(self) -> None:
+        self.add_required_documents()
+        self.write_tracked("assets/otter/icons/coffee.png", "changed")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("승인한 수달이 이미지와 다릅니다", result.stdout)
+
+    def test_rejects_incomplete_otter_artwork_set(self) -> None:
+        self.add_required_documents()
+        (self.repository / "assets/otter/poses/walk.png").unlink()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("수달이 이미지 파일이 없습니다", result.stdout)
+
+    def test_rejects_untracked_artwork_even_if_files_remain_on_disk(self) -> None:
+        self.add_required_documents()
+        subprocess.run(
+            ["git", "rm", "--quiet", "--cached", "-r", "--", "assets/otter"],
+            cwd=self.repository,
+            check=True,
+        )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("수달이 이미지 파일이 없습니다", result.stdout)
+
+    def test_rejects_unapproved_otter_image(self) -> None:
+        self.add_required_documents()
+        self.write_tracked("assets/otter/poses/draft.png")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("지원되지 않는 추적 파일", result.stdout)
 
     def test_rejects_broken_reference_style_link_destination(self) -> None:
         self.add_required_documents()
